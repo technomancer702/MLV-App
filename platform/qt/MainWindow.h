@@ -486,6 +486,7 @@ private:
     QString m_headlessOutputDir;
     QString m_headlessCodec;
     QString m_headlessCdngNaming;
+    int m_headlessMaxFrames;
     bool m_headlessAudioEnabled;
     QString m_lastExportPath;
     QString m_lastSessionFileName;

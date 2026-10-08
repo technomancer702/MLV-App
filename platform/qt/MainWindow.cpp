@@ -127,6 +127,7 @@ MainWindow::MainWindow(int &argc, char **argv, QWidget *parent) :
     m_playbackStopped = false;
     m_inClipDeleteProcess = false;
     m_headlessExport = false;
+    m_headlessMaxFrames = 0;
     m_headlessAudioEnabled = true;
 
 #ifdef STDOUT_SILENT
@@ -192,6 +193,12 @@ MainWindow::MainWindow(int &argc, char **argv, QWidget *parent) :
         {
             QString audio = QString::fromLocal8Bit( argv[++i] ).toLower();
             m_headlessAudioEnabled = !( audio == "off" || audio == "false" || audio == "0" );
+        }
+        else if( arg == "--max-frames" && i + 1 < argc )
+        {
+            bool ok = false;
+            int maxFrames = QString::fromLocal8Bit( argv[++i] ).toInt( &ok );
+            if( ok && maxFrames > 0 ) m_headlessMaxFrames = maxFrames;
         }
     }
 
@@ -5239,7 +5246,7 @@ int MainWindow::showFileInEditor(int row)
     if( ui->actionCaching->isChecked() ) on_actionCaching_triggered();
 
     //Focus Pixel Check
-    focusPixelCheckAndInstallation();
+    if( !m_headlessExport ) focusPixelCheckAndInstallation();
 
     //Autoresize columns
     ui->tableViewSession->horizontalHeader()->setSectionResizeMode( QHeaderView::ResizeToContents );
@@ -8746,6 +8753,15 @@ void MainWindow::runHeadlessExport( void )
         qCritical() << "Could not import input clip:" << m_headlessInputFileName;
         QCoreApplication::exit( 1 );
         return;
+    }
+
+    if( m_headlessMaxFrames > 0 )
+    {
+        ReceiptSettings *receipt = GET_RECEIPT( SESSION_ACTIVE_CLIP_ROW );
+        uint32_t cutIn = receipt->cutIn();
+        uint32_t cutOut = receipt->cutOut();
+        uint32_t requestedCutOut = cutIn + (uint32_t)m_headlessMaxFrames - 1;
+        receipt->setCutOut( requestedCutOut < cutOut ? requestedCutOut : cutOut );
     }
 
     m_lastClipBeforeExport = SESSION_ACTIVE_CLIP_ROW;
