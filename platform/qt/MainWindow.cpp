@@ -27,6 +27,7 @@
 #include <QDate>
 #include <QStorageInfo>
 #include <QColorDialog>
+#include <QCoreApplication>
 #include <unistd.h>
 #include <math.h>
 #include <sys/stat.h>
@@ -125,6 +126,8 @@ MainWindow::MainWindow(int &argc, char **argv, QWidget *parent) :
     m_tryToSyncAudio = false;
     m_playbackStopped = false;
     m_inClipDeleteProcess = false;
+    m_headlessExport = false;
+    m_headlessAudioEnabled = true;
 
 #ifdef STDOUT_SILENT
     //QtNetwork: shut up please!
@@ -161,6 +164,42 @@ MainWindow::MainWindow(int &argc, char **argv, QWidget *parent) :
 
     //Connect Export Handler
     connect( this, SIGNAL(exportReady()), this, SLOT(exportHandler()) );
+
+    for( int i = 1; i < argc; i++ )
+    {
+        QString arg = QString::fromLocal8Bit( argv[i] );
+        if( arg == "--headless-export" )
+        {
+            m_headlessExport = true;
+        }
+        else if( arg == "--input" && i + 1 < argc )
+        {
+            m_headlessInputFileName = QString::fromLocal8Bit( argv[++i] );
+        }
+        else if( arg == "--output-dir" && i + 1 < argc )
+        {
+            m_headlessOutputDir = QString::fromLocal8Bit( argv[++i] );
+        }
+        else if( arg == "--codec" && i + 1 < argc )
+        {
+            m_headlessCodec = QString::fromLocal8Bit( argv[++i] ).toLower();
+        }
+        else if( arg == "--cdng-naming" && i + 1 < argc )
+        {
+            m_headlessCdngNaming = QString::fromLocal8Bit( argv[++i] ).toLower();
+        }
+        else if( arg == "--audio" && i + 1 < argc )
+        {
+            QString audio = QString::fromLocal8Bit( argv[++i] ).toLower();
+            m_headlessAudioEnabled = !( audio == "off" || audio == "false" || audio == "0" );
+        }
+    }
+
+    if( m_headlessExport )
+    {
+        QTimer::singleShot( 0, this, SLOT(runHeadlessExport()) );
+        return;
+    }
 
     //"Open with" for Windows or scripts
     if( argc > 1 )
@@ -214,6 +253,11 @@ MainWindow::MainWindow(int &argc, char **argv, QWidget *parent) :
     //ui->comboBoxProcessingGamut->setVisible( false );
     ui->label_TonemappingFunction->setVisible( false );
     ui->comboBoxTonemapFct->setVisible( false );
+}
+
+bool MainWindow::isHeadlessExport( void ) const
+{
+    return m_headlessExport;
 }
 
 //Destructor
@@ -2788,7 +2832,7 @@ void MainWindow::startExportCdng(QString fileName)
     //StatusDialog
     m_pStatusDialog->ui->progressBar->setMaximum( m_exportQueue.first()->cutOut() - m_exportQueue.first()->cutIn() + 1 );
     m_pStatusDialog->ui->progressBar->setValue( 0 );
-    m_pStatusDialog->open();
+    if( !m_headlessExport ) m_pStatusDialog->open();
     //Frames in the export queue?!
     int totalFrames = 0;
     for( int i = 0; i < m_exportQueue.size(); i++ )
@@ -2922,8 +2966,14 @@ void MainWindow::startExportCdng(QString fileName)
         if( saveDngFrame( m_pMlvObject, cinemaDng, frame, filePathNr.toLatin1().data(), properties_fn.toLatin1().data() ) )
 #endif
         {
-            m_pStatusDialog->close();
+            if( !m_headlessExport ) m_pStatusDialog->close();
             qApp->processEvents();
+            if( m_headlessExport )
+            {
+                qCritical() << "Could not save:" << dngName;
+                exportAbort();
+                break;
+            }
             int ret = QMessageBox::critical( this,
                                              tr( "MLV App - Export file error" ),
                                              tr( "Could not save: %1\nHow do you like to proceed?" ).arg( dngName ),
@@ -8610,7 +8660,14 @@ void MainWindow::exportHandler( void )
     else
     {
         //Hide Status Dialog
-        m_pStatusDialog->close();
+        if( !m_headlessExport ) m_pStatusDialog->close();
+        if( m_headlessExport )
+        {
+            setEnabled( true );
+            exportRunning = false;
+            QCoreApplication::exit( m_exportAbortPressed ? 1 : 0 );
+            return;
+        }
         //Open last file which was opened before export
         openMlv( GET_RECEIPT( m_lastClipBeforeExport )->fileName() );
         setSliders( GET_RECEIPT( m_lastClipBeforeExport ), false );
@@ -8633,6 +8690,77 @@ void MainWindow::exportHandler( void )
         //Caching is in which state? Set it!
         if( ui->actionCaching->isChecked() ) on_actionCaching_triggered();
     }
+}
+
+void MainWindow::runHeadlessExport( void )
+{
+    if( m_headlessInputFileName.isEmpty() || m_headlessOutputDir.isEmpty() )
+    {
+        qCritical() << "--headless-export requires --input and --output-dir";
+        QCoreApplication::exit( 2 );
+        return;
+    }
+
+    QFileInfo inputInfo( m_headlessInputFileName );
+    if( !inputInfo.exists() || !m_headlessInputFileName.endsWith( ".mlv", Qt::CaseInsensitive ) )
+    {
+        qCritical() << "Headless input is not an existing .MLV file:" << m_headlessInputFileName;
+        QCoreApplication::exit( 2 );
+        return;
+    }
+
+    if( m_headlessCodec.isEmpty() ) m_headlessCodec = "cdng-fast";
+    if( m_headlessCodec == "cdng" )
+    {
+        m_codecProfile = CODEC_CDNG;
+    }
+    else if( m_headlessCodec == "cdng-lossless" )
+    {
+        m_codecProfile = CODEC_CDNG_LOSSLESS;
+    }
+    else if( m_headlessCodec == "cdng-fast" )
+    {
+        m_codecProfile = CODEC_CDNG_FAST;
+    }
+    else
+    {
+        qCritical() << "Unsupported headless codec:" << m_headlessCodec;
+        QCoreApplication::exit( 2 );
+        return;
+    }
+
+    m_codecOption = ( m_headlessCdngNaming == "resolve" ) ? CODEC_CDNG_RESOLVE : CODEC_CNDG_DEFAULT;
+    m_audioExportEnabled = m_headlessAudioEnabled;
+
+    QDir outputDir( m_headlessOutputDir );
+    if( !outputDir.exists() && !outputDir.mkpath( "." ) )
+    {
+        qCritical() << "Could not create output directory:" << m_headlessOutputDir;
+        QCoreApplication::exit( 1 );
+        return;
+    }
+
+    openMlvSet( QStringList() << m_headlessInputFileName );
+    if( SESSION_EMPTY )
+    {
+        qCritical() << "Could not import input clip:" << m_headlessInputFileName;
+        QCoreApplication::exit( 1 );
+        return;
+    }
+
+    m_lastClipBeforeExport = SESSION_ACTIVE_CLIP_ROW;
+    QString exportFileName = outputDir.absoluteFilePath( inputInfo.completeBaseName() + ".dng" );
+    addClipToExportQueue( SESSION_ACTIVE_CLIP_ROW, exportFileName );
+    if( m_exportQueue.isEmpty() )
+    {
+        qCritical() << "Could not queue export:" << m_headlessInputFileName;
+        QCoreApplication::exit( 1 );
+        return;
+    }
+
+    setEnabled( false );
+    qInfo() << "Starting headless export:" << m_headlessInputFileName << "->" << m_headlessOutputDir;
+    exportHandler();
 }
 
 //Play button pressed

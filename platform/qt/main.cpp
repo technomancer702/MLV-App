@@ -16,7 +16,7 @@ int main(int argc, char *argv[])
     a.setAttribute(Qt::AA_Use96Dpi);
 #endif
     MainWindow w(argc, argv);
-    w.show();
+    if( !w.isHeadlessExport() ) w.show();
 
     return a.exec();
 }

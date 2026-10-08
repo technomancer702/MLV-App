@@ -51,6 +51,7 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(int &argc, char **argv, QWidget *parent = 0);
     ~MainWindow();
+    bool isHeadlessExport( void ) const;
 
 protected:
     void timerEvent( QTimerEvent *t );
@@ -66,6 +67,7 @@ signals:
 
 private slots:
     void openMlvSet( QStringList list );
+    void runHeadlessExport( void );
     void timerFrameEvent( void );
     void on_actionOpen_triggered();
     void on_actionTranscodeAndImport_triggered();
@@ -479,6 +481,12 @@ private:
     bool m_zoomModeChanged;
     bool m_playbackStopped;
     bool m_inClipDeleteProcess;
+    bool m_headlessExport;
+    QString m_headlessInputFileName;
+    QString m_headlessOutputDir;
+    QString m_headlessCodec;
+    QString m_headlessCdngNaming;
+    bool m_headlessAudioEnabled;
     QString m_lastExportPath;
     QString m_lastSessionFileName;
     QString m_lastMlvOpenFileName;
